@@ -1,0 +1,20 @@
+# Slack SDK
+slack-bolt==1.18.1
+slack-sdk==3.27.1
+
+# Web framework
+Flask==3.0.0
+gunicorn==21.2.0
+
+# Chart generation
+matplotlib==3.8.2
+numpy==1.26.3
+
+# Interactive charts
+plotly==6.5.0
+
+# Utilities
+python-dotenv==1.0.0
+python-dateutil==2.8.2
+requests==2.32.5
+

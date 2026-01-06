@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - Gantt Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+        }
+        
+        .gradient-bg {
+            background: linear-gradient(135deg, #1e3a5f 0%, #0f2439 100%);
+        }
+        
+        .card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+        }
+        
+        .table-row:hover {
+            background-color: #f8fafc;
+        }
+        
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        .category-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .category-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        
+        .filter-btn {
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+        
+        .filter-btn:hover {
+            transform: scale(1.02);
+        }
+        
+        .filter-btn.active {
+            ring: 2px;
+            ring-offset: 2px;
+        }
+        
+        .filter-btn.inactive {
+            opacity: 0.5;
+        }
+        
+        .refresh-btn {
+            transition: all 0.2s ease;
+        }
+        
+        .refresh-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+        
+        .refresh-btn:active {
+            transform: translateY(0);
+        }
+        
+        .spin {
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+    <!-- Header -->
+    <header class="gradient-bg text-white py-6 px-8 shadow-lg">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-bold tracking-tight">{{ title }}</h1>
+                {% if description %}
+                <p class="text-blue-100 text-sm mt-1 max-w-xl">{{ description }}</p>
+                {% endif %}
+                <p class="text-blue-200 text-sm mt-1">
+                    <span id="task-count">{{ tasks|length }}</span> tasks • 
+                    <span id="date-range">
+                        {% if tasks %}
+                            {{ tasks|map(attribute='start_date')|min }} to {{ tasks|map(attribute='end_date')|max }}
+                        {% else %}
+                            No tasks
+                        {% endif %}
+                    </span>
+                </p>
+            </div>
+            <div class="flex items-center gap-4">
+                <span id="last-updated" class="text-blue-200 text-sm">
+                    Last updated: <span id="update-time">just now</span>
+                </span>
+                <button 
+                    id="refresh-btn"
+                    onclick="refreshData()"
+                    class="refresh-btn bg-blue-500 hover:bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium flex items-center gap-2"
+                >
+                    <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Refresh from List
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-8 py-8">
+        <!-- Filters -->
+        <div class="card p-4 mb-6">
+            <div class="flex items-center gap-4 flex-wrap">
+                <!-- Past events toggle -->
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="show-past-toggle" class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" onchange="togglePastEvents()">
+                    <span class="text-sm font-medium text-slate-600">Show completed events</span>
+                </label>
+                
+                {% if categories|length > 1 %}
+                <span class="text-slate-300">|</span>
+                <span class="text-sm font-medium text-slate-600">Categories:</span>
+                <button 
+                    onclick="toggleAllCategories()" 
+                    class="filter-btn px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    id="all-categories-btn"
+                >
+                    All
+                </button>
+                {% for cat, color in category_colors.items() %}
+                <button 
+                    onclick="toggleCategory('{{ cat }}')" 
+                    class="filter-btn category-badge active"
+                    style="background-color: {{ color }}22; color: {{ color }}; border: 2px solid {{ color }};"
+                    data-category="{{ cat }}"
+                    id="filter-{{ cat|replace(' ', '-') }}"
+                >
+                    <span class="category-dot" style="background-color: {{ color }};"></span>
+                    {{ cat }}
+                </button>
+                {% endfor %}
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Chart Card -->
+        <div class="card p-6 mb-8">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-slate-700">Timeline View</h2>
+                <div class="text-sm text-slate-500">
+                    Hover over bars for details • Drag to pan • Scroll to zoom • Use range slider below chart
+                </div>
+            </div>
+            <div id="gantt-chart" class="w-full" style="min-height: 500px;"></div>
+        </div>
+
+        <!-- Table Card -->
+        <div class="card p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-slate-700">Task Details</h2>
+                <div class="text-sm text-slate-500">
+                    Data synced from Slack List
+                </div>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead>
+                        <tr class="border-b border-slate-200">
+                            <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600">Task Name</th>
+                            <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600">Category</th>
+                            <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600">Start Date</th>
+                            <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600">End Date</th>
+                            <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600">Duration</th>
+                            <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600 min-w-[200px]">Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody id="task-table-body">
+                        {% for task in tasks %}
+                        {% set today = today_date %}
+                        {% set is_past = task.end_date < today %}
+                        <tr class="table-row border-b border-slate-100 {% if is_past %}past-event{% endif %}" 
+                            data-category="{{ task.category or 'Uncategorized' }}"
+                            data-is-past="{{ 'true' if is_past else 'false' }}"
+                            {% if is_past %}style="display: none;"{% endif %}>
+                            <td class="py-3 px-4">
+                                <span class="font-medium text-slate-800">{{ task.name }}</span>
+                            </td>
+                            <td class="py-3 px-4">
+                                {% set cat = task.category or 'Uncategorized' %}
+                                {% set color = category_colors.get(cat, '#6b7280') %}
+                                <span class="category-badge" style="background-color: {{ color }}22; color: {{ color }};">
+                                    <span class="category-dot" style="background-color: {{ color }};"></span>
+                                    {{ cat }}
+                                </span>
+                            </td>
+                            <td class="py-3 px-4 text-slate-600">
+                                {{ task.start_date.strftime('%b %d, %Y') }}
+                            </td>
+                            <td class="py-3 px-4 text-slate-600">
+                                {{ task.end_date.strftime('%b %d, %Y') }}
+                            </td>
+                            <td class="py-3 px-4 text-slate-600">
+                                {{ task.duration_days }} days
+                            </td>
+                            <td class="py-3 px-4 text-slate-600 text-sm">
+                                {% if task.metadata.notes %}
+                                {{ task.metadata.notes|truncate(100) }}
+                                {% else %}
+                                <span class="text-slate-400">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="py-8 text-center text-slate-500">
+                                No tasks found. Add tasks to your Slack List and click "Refresh from List".
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Help Section -->
+        <div class="mt-8 p-6 bg-blue-50 rounded-xl border border-blue-100">
+            <h3 class="font-semibold text-blue-900 mb-2">How to Update Tasks</h3>
+            <p class="text-blue-800 text-sm">
+                Edit your tasks in the <strong>Slack List</strong>, then click "Refresh from List" to sync changes here.
+                The chart will automatically update with your latest data.
+            </p>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="text-center py-6 text-slate-400 text-sm">
+        Powered by SlackGantt • 
+        <a href="https://slack.com" class="text-blue-500 hover:underline">Open Slack</a>
+    </footer>
+
+    <script>
+        // Initialize chart with server-rendered data
+        const chartData = {{ chart_json|safe }};
+        const allTasks = {{ tasks_json|safe }};
+        const categoryColors = {{ category_colors_json|safe }};
+        const todayStr = '{{ today_date.isoformat() }}';
+        
+        // Track active categories and past events visibility
+        let activeCategories = new Set(Object.keys(categoryColors));
+        let showPastEvents = false;
+        
+        Plotly.newPlot('gantt-chart', chartData.data, chartData.layout, {
+            responsive: true,
+            displayModeBar: true,
+            modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+            displaylogo: false
+        });
+
+        // Toggle past events visibility
+        function togglePastEvents() {
+            showPastEvents = document.getElementById('show-past-toggle').checked;
+            updateChartVisibility();
+            updateTableVisibility();
+        }
+
+        // Toggle category visibility
+        function toggleCategory(category) {
+            const btn = document.getElementById('filter-' + category.replace(/ /g, '-'));
+            
+            if (activeCategories.has(category)) {
+                activeCategories.delete(category);
+                btn.classList.remove('active');
+                btn.classList.add('inactive');
+            } else {
+                activeCategories.add(category);
+                btn.classList.remove('inactive');
+                btn.classList.add('active');
+            }
+            
+            updateChartVisibility();
+            updateTableVisibility();
+        }
+        
+        // Toggle all categories
+        function toggleAllCategories() {
+            const allActive = activeCategories.size === Object.keys(categoryColors).length;
+            
+            if (allActive) {
+                // Deactivate all
+                activeCategories.clear();
+            } else {
+                // Activate all
+                activeCategories = new Set(Object.keys(categoryColors));
+            }
+            
+            // Update button states
+            Object.keys(categoryColors).forEach(cat => {
+                const btn = document.getElementById('filter-' + cat.replace(/ /g, '-'));
+                if (btn) {
+                    if (activeCategories.has(cat)) {
+                        btn.classList.remove('inactive');
+                        btn.classList.add('active');
+                    } else {
+                        btn.classList.remove('active');
+                        btn.classList.add('inactive');
+                    }
+                }
+            });
+            
+            updateChartVisibility();
+            updateTableVisibility();
+        }
+        
+        // Update chart visibility based on active categories and past events filter
+        function updateChartVisibility() {
+            chartData.data.forEach((trace, i) => {
+                const categoryMatch = activeCategories.has(trace.legendgroup) || 
+                               (trace.legendgroup === 'Uncategorized' && activeCategories.has('Uncategorized'));
+                
+                // Check if trace represents a past event (end_date before today)
+                let isPast = false;
+                if (trace.customdata && trace.customdata[0]) {
+                    const endDate = trace.customdata[0].end_date;
+                    if (endDate && endDate < todayStr) {
+                        isPast = true;
+                    }
+                }
+                
+                const visible = categoryMatch && (showPastEvents || !isPast);
+                Plotly.restyle('gantt-chart', { visible: visible }, [i]);
+            });
+        }
+        
+        // Update table visibility based on active categories and past events filter
+        function updateTableVisibility() {
+            const rows = document.querySelectorAll('#task-table-body tr[data-category]');
+            let visibleCount = 0;
+            
+            rows.forEach(row => {
+                const category = row.dataset.category;
+                const isPast = row.dataset.isPast === 'true';
+                const categoryMatch = activeCategories.has(category);
+                const pastMatch = showPastEvents || !isPast;
+                
+                if (categoryMatch && pastMatch) {
+                    row.style.display = '';
+                    visibleCount++;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+            
+            document.getElementById('task-count').textContent = visibleCount;
+        }
+        
+        // Initialize visibility (hide past events by default in both chart and table)
+        updateChartVisibility();
+        updateTableVisibility();
+
+        // Refresh data from Slack List
+        async function refreshData() {
+            const btn = document.getElementById('refresh-btn');
+            const icon = document.getElementById('refresh-icon');
+            
+            // Show loading state
+            btn.disabled = true;
+            icon.classList.add('spin');
+            
+            try {
+                const response = await fetch('/api/tasks?refresh=true');
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Reload the page to show updated data
+                    window.location.reload();
+                } else {
+                    alert('Error refreshing data: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error connecting to server: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                icon.classList.remove('spin');
+            }
+        }
+
+        // Update time display
+        function updateTimeDisplay() {
+            const now = new Date();
+            document.getElementById('update-time').textContent = 
+                now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        }
+        updateTimeDisplay();
+    </script>
+</body>
+</html>
