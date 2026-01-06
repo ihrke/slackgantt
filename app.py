@@ -323,6 +323,9 @@ flask_app = Flask(__name__)
 flask_app.template_folder = os.path.join(os.path.dirname(__file__), 'templates')
 handler = SlackRequestHandler(bolt_app)
 
+# Alias for gunicorn compatibility (allows both `app:app` and `app:flask_app`)
+app = flask_app
+
 
 def get_cached_tasks(force_refresh: bool = False) -> list[Task]:
     """Get tasks with caching to reduce API calls."""
