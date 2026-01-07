@@ -164,7 +164,7 @@ class CanvasService:
                 permalink = f"https://slack.com/files/{file_id}"
             
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-            dashboard_url = f"http://localhost:{config.PORT}/"
+            dashboard_url = f"{config.get_dashboard_url()}/"
             
             # Image embed - files are NOT deleted so references stay valid
             markdown_content = f"**📊 {title}** | [Dashboard]({dashboard_url}) | _{timestamp}_\n\n![Chart]({permalink})"
@@ -267,7 +267,7 @@ class CanvasService:
                 permalink = f"https://slack.com/files/{file_id}"
             
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-            dashboard_url = f"http://localhost:{config.PORT}/"
+            dashboard_url = f"{config.get_dashboard_url()}/"
             
             # Image embed - files are NOT deleted so references stay valid
             markdown_content = f"**📊 {title}** | [Dashboard]({dashboard_url}) | _{timestamp}_\n\n![Chart]({permalink})"

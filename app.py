@@ -214,7 +214,7 @@ def handle_gantt_command(ack, command, respond, client):
         image_data = chart_service.generate_chart(tasks, group_by=group_by, exclude_past=True)
         
         # Build dashboard URL
-        dashboard_url = f"http://localhost:{config.PORT}/"
+        dashboard_url = f"{config.get_dashboard_url()}/"
         
         # Get chart title from list
         chart_title = list_service.get_list_title(list_id)

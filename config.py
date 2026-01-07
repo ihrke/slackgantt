@@ -70,6 +70,14 @@ class Config:
     # Server configuration
     PORT: int = int(os.environ.get("PORT", "3000"))
     DEBUG: bool = os.environ.get("DEBUG", "false").lower() == "true"
+    BASE_URL: str = os.environ.get("BASE_URL", "")  # e.g., https://slackgantt.fly.dev
+    
+    @classmethod
+    def get_dashboard_url(cls) -> str:
+        """Get the dashboard URL, using BASE_URL if set, otherwise localhost."""
+        if cls.BASE_URL:
+            return cls.BASE_URL.rstrip('/')
+        return f"http://localhost:{cls.PORT}"
     
     # Polling configuration (minutes between automatic updates, 0 = disabled)
     POLL_INTERVAL_MINUTES: int = int(os.environ.get("POLL_INTERVAL_MINUTES", "0"))
