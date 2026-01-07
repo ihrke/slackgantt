@@ -23,8 +23,16 @@
             box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
         }
         
+        .table-row {
+            transition: background-color 0.3s ease;
+        }
+        
         .table-row:hover {
             background-color: #f8fafc;
+        }
+        
+        .table-row.bg-blue-100 {
+            background-color: #dbeafe !important;
         }
         
         .status-badge {
@@ -135,7 +143,7 @@
             <div class="flex items-center gap-4 flex-wrap">
                 <!-- Past events toggle -->
                 <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" id="show-past-toggle" class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" onchange="togglePastEvents()">
+                    <input type="checkbox" id="show-past-toggle" class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" onchange="togglePastEvents()" {% if show_past %}checked{% endif %}>
                     <span class="text-sm font-medium text-slate-600">Show completed events</span>
                 </label>
                 
@@ -152,7 +160,7 @@
                 {% for cat, color in category_colors.items() %}
                 <button 
                     onclick="toggleCategory('{{ cat }}')" 
-                    class="filter-btn category-badge active"
+                    class="filter-btn category-badge {% if cat in active_categories %}active{% else %}inactive{% endif %}"
                     style="background-color: {{ color }}22; color: {{ color }}; border: 2px solid {{ color }};"
                     data-category="{{ cat }}"
                     id="filter-{{ cat|replace(' ', '-') }}"
@@ -201,12 +209,16 @@
                         {% for task in tasks %}
                         {% set today = today_date %}
                         {% set is_past = task.end_date < today %}
-                        <tr class="table-row border-b border-slate-100 {% if is_past %}past-event{% endif %}" 
+                        <tr class="table-row border-b border-slate-100 {% if is_past %}past-event{% endif %} cursor-pointer" 
+                            id="task-row-{{ task.id }}"
+                            data-task-id="{{ task.id }}"
+                            data-task-name="{{ task.name }}"
                             data-category="{{ task.category or 'Uncategorized' }}"
                             data-is-past="{{ 'true' if is_past else 'false' }}"
+                            onclick="scrollToChartBar('{{ task.id }}', '{{ task.name }}')"
                             {% if is_past %}style="display: none;"{% endif %}>
                             <td class="py-3 px-4">
-                                <span class="font-medium text-slate-800">{{ task.name }}</span>
+                                <span class="font-medium text-slate-800 hover:text-blue-600">{{ task.name }}</span>
                             </td>
                             <td class="py-3 px-4">
                                 {% set cat = task.category or 'Uncategorized' %}
@@ -268,9 +280,9 @@
         const categoryColors = {{ category_colors_json|safe }};
         const todayStr = '{{ today_date.isoformat() }}';
         
-        // Track active categories and past events visibility
-        let activeCategories = new Set(Object.keys(categoryColors));
-        let showPastEvents = false;
+        // Track active categories and past events visibility (from server state)
+        let activeCategories = new Set({{ active_categories_json|safe }});
+        let showPastEvents = {{ 'true' if show_past else 'false' }};
         
         Plotly.newPlot('gantt-chart', chartData.data, chartData.layout, {
             responsive: true,
@@ -278,12 +290,54 @@
             modeBarButtonsToRemove: ['lasso2d', 'select2d'],
             displaylogo: false
         });
+        
+        // Handle click on chart bars to scroll to table row
+        document.getElementById('gantt-chart').on('plotly_click', function(data) {
+            if (data.points && data.points.length > 0) {
+                const point = data.points[0];
+                if (point.customdata && point.customdata.task_id) {
+                    const taskId = point.customdata.task_id;
+                    const row = document.getElementById('task-row-' + taskId);
+                    if (row) {
+                        // Make sure row is visible (enable past events if needed)
+                        if (row.style.display === 'none') {
+                            document.getElementById('show-past-toggle').checked = true;
+                            togglePastEvents();
+                        }
+                        // Scroll to row with highlight effect
+                        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        row.classList.add('bg-blue-100');
+                        setTimeout(() => {
+                            row.classList.remove('bg-blue-100');
+                        }, 2000);
+                    }
+                }
+            }
+        });
+
+        // Build URL with current filter state
+        function buildFilterUrl() {
+            const params = new URLSearchParams();
+            if (showPastEvents) {
+                params.set('show_past', 'true');
+            }
+            if (activeCategories.size < Object.keys(categoryColors).length) {
+                params.set('categories', Array.from(activeCategories).join(','));
+            }
+            const queryString = params.toString();
+            return queryString ? '?' + queryString : '/';
+        }
+        
+        // Reload page with new filters
+        function applyFilters() {
+            window.location.href = buildFilterUrl();
+        }
 
         // Toggle past events visibility
         function togglePastEvents() {
             showPastEvents = document.getElementById('show-past-toggle').checked;
-            updateChartVisibility();
-            updateTableVisibility();
+            updateTableVisibility();  // Update table immediately
+            applyFilters();  // Reload with new chart
         }
 
         // Toggle category visibility
@@ -300,8 +354,8 @@
                 btn.classList.add('active');
             }
             
-            updateChartVisibility();
-            updateTableVisibility();
+            updateTableVisibility();  // Update table immediately
+            applyFilters();  // Reload with new chart
         }
         
         // Toggle all categories
@@ -330,28 +384,8 @@
                 }
             });
             
-            updateChartVisibility();
-            updateTableVisibility();
-        }
-        
-        // Update chart visibility based on active categories and past events filter
-        function updateChartVisibility() {
-            chartData.data.forEach((trace, i) => {
-                const categoryMatch = activeCategories.has(trace.legendgroup) || 
-                               (trace.legendgroup === 'Uncategorized' && activeCategories.has('Uncategorized'));
-                
-                // Check if trace represents a past event (end_date before today)
-                let isPast = false;
-                if (trace.customdata && trace.customdata[0]) {
-                    const endDate = trace.customdata[0].end_date;
-                    if (endDate && endDate < todayStr) {
-                        isPast = true;
-                    }
-                }
-                
-                const visible = categoryMatch && (showPastEvents || !isPast);
-                Plotly.restyle('gantt-chart', { visible: visible }, [i]);
-            });
+            updateTableVisibility();  // Update table immediately
+            applyFilters();  // Reload with new chart
         }
         
         // Update table visibility based on active categories and past events filter
@@ -376,8 +410,7 @@
             document.getElementById('task-count').textContent = visibleCount;
         }
         
-        // Initialize visibility (hide past events by default in both chart and table)
-        updateChartVisibility();
+        // Initialize table visibility on page load
         updateTableVisibility();
 
         // Refresh data from Slack List
@@ -414,6 +447,33 @@
                 now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
         }
         updateTimeDisplay();
+        
+        // Scroll to chart bar when clicking table row
+        function scrollToChartBar(taskId, taskName) {
+            // Scroll chart into view
+            const chartDiv = document.getElementById('gantt-chart');
+            chartDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            // Find the trace index for this task and highlight it
+            const traces = chartData.data;
+            for (let i = 0; i < traces.length; i++) {
+                const trace = traces[i];
+                if (trace.customdata && trace.customdata[0] && trace.customdata[0].task_id === taskId) {
+                    // Temporarily increase line width to highlight
+                    Plotly.restyle('gantt-chart', {
+                        'line.width': 40
+                    }, [i]);
+                    
+                    // Reset after animation
+                    setTimeout(() => {
+                        Plotly.restyle('gantt-chart', {
+                            'line.width': 28
+                        }, [i]);
+                    }, 1500);
+                    break;
+                }
+            }
+        }
     </script>
 </body>
 </html>

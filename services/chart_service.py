@@ -432,10 +432,35 @@ class InteractiveChartService:
             if not tasks:
                 return self._generate_empty_chart()
         
-        # Sort tasks by category then by start date
-        sorted_tasks = sorted(tasks, key=lambda t: (t.category or '', t.start_date), reverse=True)
+        # Group tasks by category, then sort within each group by start date
+        categories = {}
+        for task in tasks:
+            cat = task.category or "Uncategorized"
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(task)
         
-        # Build the figure using timeline approach for better date handling
+        # Sort categories alphabetically, sort tasks within each category by start date
+        sorted_categories = sorted(categories.keys())
+        
+        # Build y-positions with gaps between groups
+        y_positions = {}  # task.id -> y position
+        y_labels = []  # for y-axis tick labels (empty - we show names in bars)
+        current_y = 0
+        group_boundaries = []  # Store where each group starts for visual separation
+        
+        for cat_idx, cat in enumerate(sorted_categories):
+            if cat_idx > 0:
+                current_y += 0.8  # Add gap between groups
+                group_boundaries.append(current_y - 0.4)  # Middle of the gap
+            
+            cat_tasks = sorted(categories[cat], key=lambda t: t.start_date)
+            for task in cat_tasks:
+                y_positions[task.id] = current_y
+                y_labels.append('')  # Empty label - name shown in bar
+                current_y += 1
+        
+        # Build the figure
         fig = go.Figure()
         
         # Track which categories have been added to legend
@@ -444,12 +469,35 @@ class InteractiveChartService:
         # Get today's date for filtering and today marker
         today = date.today()
         
-        for i, task in enumerate(sorted_tasks):
+        # Track category y-positions for labels
+        category_y_positions = {}  # category -> (min_y, max_y)
+        
+        for task in tasks:
             color = self._get_task_color(task)
             duration_days = (task.end_date - task.start_date).days + 1
+            y_pos = y_positions[task.id]
+            
+            # Track category y range
+            category_key = task.category or "Uncategorized"
+            if category_key not in category_y_positions:
+                category_y_positions[category_key] = [y_pos, y_pos]
+            else:
+                category_y_positions[category_key][0] = min(category_y_positions[category_key][0], y_pos)
+                category_y_positions[category_key][1] = max(category_y_positions[category_key][1], y_pos)
             
             # Extract notes from metadata if available
             notes = self._extract_notes(task)
+            
+            # Wrap long notes for hover (max ~50 chars per line)
+            if notes and len(notes) > 50:
+                wrapped_notes = '<br>'.join([notes[i:i+50] for i in range(0, min(len(notes), 200), 50)])
+                if len(notes) > 200:
+                    wrapped_notes += '...'
+            else:
+                wrapped_notes = notes
+            
+            # Truncate name for display on bar
+            display_name = task.name if len(task.name) <= 30 else task.name[:27] + "..."
             
             # Create hover text with details
             hover_text = (
@@ -464,31 +512,81 @@ class InteractiveChartService:
                 hover_text += f"<br>Category: {task.category}"
             if task.assignee:
                 hover_text += f"<br>Assignee: {task.assignee}"
-            if notes:
-                hover_text += f"<br><br><i>Notes:</i> {notes}"
-            
-            # Convert dates to datetime strings for Plotly
-            start_str = task.start_date.isoformat()
-            end_str = task.end_date.isoformat()
+            if wrapped_notes:
+                hover_text += f"<br><br><i>Notes:</i><br>{wrapped_notes}"
             
             # Show in legend only once per category
-            category_key = task.category or "Uncategorized"
             show_legend = category_key not in legend_added
             if show_legend:
                 legend_added.add(category_key)
             
-            # Use scatter with horizontal bars for better date axis handling
+            # Convert dates to strings
+            start_str = task.start_date.isoformat()
+            end_str = task.end_date.isoformat()
+            mid_date = task.start_date + timedelta(days=duration_days // 2)
+            mid_str = mid_date.isoformat()
+            
+            # Use scatter with thick line for the bar - add multiple points for full clickability
+            num_points = max(3, duration_days // 3)
+            x_points = []
+            for i in range(num_points + 1):
+                point_date = task.start_date + timedelta(days=i * duration_days // num_points)
+                x_points.append(point_date.isoformat())
+            y_points = [y_pos] * len(x_points)
+            
             fig.add_trace(go.Scatter(
-                x=[start_str, end_str],
-                y=[task.name, task.name],
+                x=x_points,
+                y=y_points,
                 mode='lines',
-                line=dict(color=color, width=25),
+                line=dict(color=color, width=28),
                 hovertemplate=hover_text + "<extra></extra>",
                 name=category_key,
                 legendgroup=category_key,
                 showlegend=show_legend,
-                customdata=[{"end_date": end_str, "is_past": task.end_date < today}]  # For filtering
+                customdata=[{
+                    "task_id": task.id,
+                    "end_date": end_str,
+                    "is_past": task.end_date < today
+                }] * len(x_points)
             ))
+            
+            # Add task name as annotation with dark background for visibility
+            # Include task metadata for filtering
+            fig.add_annotation(
+                x=mid_str,
+                y=y_pos,
+                text=f"<b>{display_name}</b>",
+                showarrow=False,
+                font=dict(color='white', size=10),
+                xanchor='center',
+                yanchor='middle',
+                bgcolor='rgba(50, 50, 50, 0.8)',
+                borderpad=3,
+                bordercolor='rgba(50, 50, 50, 0.8)',
+                visible=True,
+                # Store task info in name for JS filtering
+                name=f"task:{task.id}:{task.end_date.isoformat()}:{category_key}"
+            )
+        
+        # Add horizontal lines to separate category groups
+        for boundary_y in group_boundaries:
+            fig.add_shape(
+                type="line",
+                x0=0,
+                x1=1,
+                xref="paper",
+                y0=boundary_y,
+                y1=boundary_y,
+                line=dict(color="#d0d0d0", width=1, dash="dot")
+            )
+        
+        # Add category labels on y-axis (in the middle of each category group)
+        category_y_ticks = []
+        category_y_labels = []
+        for cat, (min_y, max_y) in category_y_positions.items():
+            mid_y = (min_y + max_y) / 2
+            category_y_ticks.append(mid_y)
+            category_y_labels.append(cat)
         
         # Calculate initial x-axis range: start at earliest ongoing event
         ongoing_tasks = [t for t in tasks if t.start_date <= today <= t.end_date]
@@ -505,8 +603,13 @@ class InteractiveChartService:
                 range_start = min(t.start_date for t in tasks)
         
         # End range at max date + some padding
+        min_date = min(t.start_date for t in tasks)
         max_date = max(t.end_date for t in tasks)
         range_end = max_date + timedelta(days=30)
+        
+        # Calculate chart height based on number of tasks + gaps
+        total_height = current_y
+        chart_height = max(400, total_height * 45 + 150)
         
         # Configure layout
         chart_title = title or self.title
@@ -525,12 +628,18 @@ class InteractiveChartService:
                 tickformat='%b %d, %Y',
                 dtick='M1',  # Monthly ticks
                 range=[range_start.isoformat(), range_end.isoformat()],
-                rangeslider=dict(visible=True),  # Add range slider for easy navigation
+                rangeslider=dict(visible=True),
             ),
             yaxis=dict(
                 title='',
-                autorange='reversed',  # Keep original order
+                showticklabels=True,
+                tickmode='array',
+                tickvals=category_y_ticks,
+                ticktext=category_y_labels,
+                tickfont=dict(size=11, color='#555'),
                 showgrid=False,
+                range=[-0.5, current_y - 0.5],
+                fixedrange=False,
             ),
             barmode='overlay',
             plot_bgcolor='#fafafa',
@@ -541,7 +650,7 @@ class InteractiveChartService:
                 font_size=13,
                 font_family='system-ui, -apple-system, sans-serif'
             ),
-            height=max(500, len(tasks) * 40 + 150),  # Dynamic height
+            height=chart_height,
             legend=dict(
                 orientation='h',
                 yanchor='bottom',
@@ -553,8 +662,6 @@ class InteractiveChartService:
         )
         
         # Add today marker
-        min_date = min(t.start_date for t in tasks)
-        
         if min_date <= today <= max_date:
             fig.add_shape(
                 type="line",

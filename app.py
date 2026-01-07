@@ -353,18 +353,23 @@ def dashboard():
     """Render the interactive Gantt chart dashboard."""
     import json
     
-    tasks = get_cached_tasks()
+    all_tasks = get_cached_tasks()
+    today = date.today()
+    
+    # Get filter parameters from query string
+    show_past = request.args.get('show_past', 'false').lower() == 'true'
+    active_categories = request.args.get('categories', '')  # Comma-separated
     
     # Get list info (title, description)
     list_info = list_service.get_list_info(config.SLACK_LIST_ID)
     chart_title = list_info["title"]
     list_description = list_info["description"]
     
-    # Get unique categories and assign colors
-    categories = set()
-    for task in tasks:
+    # Get unique categories and assign colors (from ALL tasks, not filtered)
+    all_categories = set()
+    for task in all_tasks:
         cat = task.category or "Uncategorized"
-        categories.add(cat)
+        all_categories.add(cat)
     
     # Build category color map
     category_colors = {}
@@ -382,21 +387,36 @@ def dashboard():
     # Use configured colors first, then assign from palette
     configured_colors = config.get_category_colors()
     color_index = 0
-    for cat in sorted(categories):
+    for cat in sorted(all_categories):
         if cat in configured_colors:
             category_colors[cat] = configured_colors[cat]
         else:
             category_colors[cat] = color_palette[color_index % len(color_palette)]
             color_index += 1
     
+    # Determine which categories are active
+    if active_categories:
+        active_cat_set = set(active_categories.split(','))
+    else:
+        active_cat_set = all_categories  # All active by default
+    
+    # Filter tasks for the chart
+    chart_tasks = []
+    for task in all_tasks:
+        task_cat = task.category or "Uncategorized"
+        is_past = task.end_date < today
+        
+        # Include if category is active AND (show_past OR not past)
+        if task_cat in active_cat_set and (show_past or not is_past):
+            chart_tasks.append(task)
+    
     # Update interactive chart service with colors
     interactive_chart_service.color_map = category_colors
     
-    # Generate chart JSON
-    chart_json = interactive_chart_service.generate_chart_json(tasks, title=chart_title)
+    # Generate chart JSON with filtered tasks
+    chart_json = interactive_chart_service.generate_chart_json(chart_tasks, title=chart_title)
     
-    # Prepare tasks JSON for JavaScript
-    today = date.today()
+    # Prepare tasks JSON for JavaScript (ALL tasks for table)
     tasks_json = json.dumps([
         {
             "id": task.id,
@@ -408,20 +428,24 @@ def dashboard():
             "notes": task.metadata.get("notes", ""),
             "is_past": task.end_date < today
         }
-        for task in tasks
+        for task in all_tasks
     ])
     
     return render_template(
         'dashboard.html',
         title=chart_title,
         description=list_description,
-        tasks=tasks,
+        tasks=all_tasks,  # All tasks for table
+        chart_tasks=chart_tasks,  # Filtered tasks for chart
         chart_json=chart_json,
         tasks_json=tasks_json,
-        categories=sorted(categories),
+        categories=sorted(all_categories),
         category_colors=category_colors,
         category_colors_json=json.dumps(category_colors),
-        today_date=date.today()
+        active_categories=list(active_cat_set),
+        active_categories_json=json.dumps(list(active_cat_set)),
+        show_past=show_past,
+        today_date=today
     )
 
 
