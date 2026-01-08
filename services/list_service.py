@@ -186,87 +186,102 @@ class ListService:
     
     def _discover_schema(self, list_id: str):
         """
-        Auto-discover column ID mappings and category options by comparing
-        CSV export (with human-readable headers/values) against API data.
+        Auto-discover column ID mappings and category options using slackLists.items.info API.
+        
+        The items.info API returns list metadata including:
+        - list.title: Human-readable list title
+        - list.list_metadata.schema: Column definitions with name, key, type, and options
         """
         if list_id in self._column_mapping and self.category_options:
             return  # Already discovered
         
-        csv_data = self._fetch_csv_data(list_id)
-        if not csv_data["rows"]:
-            logger.warning("Could not fetch CSV data for schema discovery")
-            return
-        
-        api_items = self._fetch_items_from_api(list_id)
-        if not api_items:
-            logger.warning("Could not fetch API items for schema discovery")
-            return
-        
-        # Build column name -> ID mapping by matching values
         column_mapping = {}
         category_mapping = {}
         
-        # Get CSV column headers
-        csv_columns = csv_data["columns"]
-        logger.debug(f"CSV columns: {csv_columns}")
+        # Get schema from slackLists.items.info API
+        items = self._fetch_items_from_api(list_id)
+        if not items:
+            logger.warning("No items found, cannot discover schema")
+            self._column_mapping[list_id] = column_mapping
+            return
         
-        # Match each CSV row with its API equivalent by task name
-        for csv_row in csv_data["rows"]:
-            csv_name = csv_row.get("Name", "").strip()
-            if not csv_name:
-                continue
+        # Use first item to fetch list metadata
+        first_item_id = items[0].get("id")
+        schema = self._fetch_list_schema(list_id, first_item_id)
+        
+        if not schema:
+            logger.warning("Could not fetch list schema")
+            self._column_mapping[list_id] = column_mapping
+            return
+        
+        # Build column mapping from schema
+        # Schema format: {"id": "Col...", "name": "Human Name", "key": "api_key", "type": "text|date|select"}
+        for col_def in schema:
+            col_name = col_def.get("name", "")
+            col_key = col_def.get("key", "")
+            col_type = col_def.get("type", "")
             
-            # Find matching API item
-            for api_item in api_items:
-                api_name = None
-                api_fields = {}
-                
-                for field in api_item.get("fields", []):
-                    key = field.get("key", "")
-                    value = field.get("value", "")
-                    text = field.get("text", "")
-                    api_fields[key] = {"value": value, "text": text}
-                    
-                    # Check if this is the name field
-                    if text and text.strip() == csv_name:
-                        api_name = text.strip()
-                        column_mapping["Name"] = key
-                
-                if api_name != csv_name:
-                    continue
-                
-                # Found matching item - now map other columns
-                for csv_col in csv_columns:
-                    if csv_col == "Name" or csv_col == "Created":
-                        continue
-                    
-                    csv_value = csv_row.get(csv_col, "").strip()
-                    if not csv_value:
-                        continue
-                    
-                    # Find which API field has this value
-                    for api_key, api_data in api_fields.items():
-                        api_value = str(api_data["value"]).strip() if api_data["value"] else ""
-                        api_text = str(api_data["text"]).strip() if api_data["text"] else ""
-                        
-                        # Direct match for dates and text
-                        if csv_value == api_value or csv_value == api_text:
-                            if csv_col not in column_mapping:
-                                column_mapping[csv_col] = api_key
-                                logger.debug(f"Mapped '{csv_col}' -> '{api_key}'")
-                        
-                        # Category option ID -> human-readable name
-                        if api_value and api_value.startswith("Opt"):
-                            if api_value not in category_mapping:
-                                category_mapping[api_value] = csv_value
-                                column_mapping[csv_col] = api_key
-                                logger.debug(f"Mapped category option '{api_value}' -> '{csv_value}'")
+            if col_name and col_key:
+                column_mapping[col_name] = col_key
+                logger.debug(f"Mapped column '{col_name}' -> key '{col_key}' (type: {col_type})")
+            
+            # Extract category options from select fields
+            if col_type == "select" and "options" in col_def:
+                choices = col_def.get("options", {}).get("choices", [])
+                for choice in choices:
+                    opt_value = choice.get("value", "")
+                    opt_label = choice.get("label", "")
+                    if opt_value and opt_label:
+                        category_mapping[opt_value] = opt_label
+                        logger.debug(f"Mapped option '{opt_value}' -> '{opt_label}'")
         
         self._column_mapping[list_id] = column_mapping
         self.category_options = category_mapping
         
-        logger.info(f"Auto-discovered column mapping: {column_mapping}")
-        logger.info(f"Auto-discovered category mapping: {category_mapping}")
+        logger.info(f"Discovered column mapping: {column_mapping}")
+        logger.info(f"Discovered category options: {category_mapping}")
+    
+    def _fetch_list_schema(self, list_id: str, item_id: str) -> list[dict]:
+        """
+        Fetch list schema (column definitions) using slackLists.items.info API.
+        
+        Returns list of column definitions with name, key, type, and options.
+        """
+        if not self.user_token:
+            return []
+        
+        try:
+            url = "https://slack.com/api/slackLists.items.info"
+            headers = {
+                "Authorization": f"Bearer {self.user_token}",
+                "Content-Type": "application/json"
+            }
+            payload = {"list_id": list_id, "id": item_id}
+            
+            response = requests.post(url, headers=headers, json=payload)
+            data = response.json()
+            
+            if data.get("ok"):
+                list_obj = data.get("list", {})
+                
+                # Cache list info (title, etc.)
+                if list_id not in self._list_info_cache:
+                    self._list_info_cache[list_id] = {
+                        "title": list_obj.get("title", f"List {list_id}"),
+                        "description": ""
+                    }
+                
+                # Extract schema from list_metadata
+                list_metadata = list_obj.get("list_metadata", {})
+                schema = list_metadata.get("schema", [])
+                return schema
+            else:
+                logger.warning(f"Could not fetch list schema: {data.get('error')}")
+                return []
+                
+        except Exception as e:
+            logger.warning(f"Error fetching list schema: {e}")
+            return []
     
     def _get_column_id(self, list_id: str, column_name: str) -> Optional[str]:
         """Get the API column ID for a given human-readable column name."""
@@ -455,24 +470,22 @@ class ListService:
     def get_list_info(self, list_id: str) -> dict:
         """
         Get the title and description of a Slack List.
-        Tries to extract from CSV data (which includes the list name in download).
-        Falls back to list_id if unavailable.
+        Uses cached data from schema discovery (via slackLists.items.info API).
         """
         if list_id in self._list_info_cache:
             return self._list_info_cache[list_id]
         
-        info = {
-            "title": f"List {list_id}",  # Default fallback
+        # If not cached, trigger schema discovery which also caches list info
+        items = self._fetch_items_from_api(list_id)
+        if items:
+            first_item_id = items[0].get("id")
+            self._fetch_list_schema(list_id, first_item_id)
+        
+        # Return cached info or default
+        return self._list_info_cache.get(list_id, {
+            "title": f"List {list_id}",
             "description": ""
-        }
-        
-        # Try to get title from CSV download metadata
-        csv_data = self._fetch_csv_data(list_id)
-        if csv_data.get("title"):
-            info["title"] = csv_data["title"]
-        
-        self._list_info_cache[list_id] = info
-        return info
+        })
     
     def get_list_title(self, list_id: str) -> str:
         """Get the title of a Slack List."""
