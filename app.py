@@ -382,14 +382,28 @@ def dashboard():
 @login_required
 def api_tasks():
     """API endpoint to get tasks as JSON."""
-    list_id = request.args.get('list_id')
-    if not list_id:
-        return jsonify({"success": False, "error": "Missing list_id parameter"}), 400
+    # Support both list_ids (comma-separated) and list_id (single)
+    list_ids_param = request.args.get('list_ids', '')
+    list_id_param = request.args.get('list_id', '')
+    
+    if list_ids_param:
+        list_ids = [lid.strip() for lid in list_ids_param.split(',') if lid.strip()]
+    elif list_id_param:
+        list_ids = [list_id_param]
+    else:
+        list_ids = []
+    
+    if not list_ids:
+        return jsonify({"success": False, "error": "Missing list_id or list_ids parameter"}), 400
     
     force_refresh = request.args.get('refresh', 'false').lower() == 'true'
     
     try:
-        tasks = get_cached_tasks(list_id, force_refresh=force_refresh)
+        if len(list_ids) == 1:
+            tasks = get_cached_tasks(list_ids[0], force_refresh=force_refresh)
+            list_names = {list_ids[0]: list_service.get_list_info(list_ids[0])["title"]}
+        else:
+            tasks, list_names = get_cached_tasks_multi(list_ids, force_refresh=force_refresh)
         
         return jsonify({
             "success": True,
@@ -401,11 +415,14 @@ def api_tasks():
                     "end_date": task.end_date.isoformat(),
                     "duration_days": task.duration_days,
                     "category": task.category,
+                    "source_list_id": task.source_list_id,
+                    "source_list_name": task.source_list_name,
                     "metadata": task.metadata
                 }
                 for task in tasks
             ],
-            "count": len(tasks)
+            "count": len(tasks),
+            "list_names": list_names
         })
     except Exception as e:
         logger.exception(f"Error fetching tasks: {e}")
@@ -416,12 +433,26 @@ def api_tasks():
 @login_required
 def api_chart_png():
     """API endpoint to get static chart as PNG."""
-    list_id = request.args.get('list_id')
-    if not list_id:
-        return jsonify({"error": "Missing list_id parameter"}), 400
+    # Support both list_ids (comma-separated) and list_id (single)
+    list_ids_param = request.args.get('list_ids', '')
+    list_id_param = request.args.get('list_id', '')
+    
+    if list_ids_param:
+        list_ids = [lid.strip() for lid in list_ids_param.split(',') if lid.strip()]
+    elif list_id_param:
+        list_ids = [list_id_param]
+    else:
+        list_ids = []
+    
+    if not list_ids:
+        return jsonify({"error": "Missing list_id or list_ids parameter"}), 400
     
     try:
-        tasks = get_cached_tasks(list_id)
+        if len(list_ids) == 1:
+            tasks = get_cached_tasks(list_ids[0])
+        else:
+            tasks, _ = get_cached_tasks_multi(list_ids)
+        
         group_by = request.args.get('group_by')
         # exclude_past defaults to True, can be overridden with ?include_past=true
         include_past = request.args.get('include_past', 'false').lower() == 'true'
@@ -437,12 +468,26 @@ def api_chart_png():
 @login_required
 def api_chart_html():
     """API endpoint to get interactive chart as embeddable HTML."""
-    list_id = request.args.get('list_id')
-    if not list_id:
-        return jsonify({"error": "Missing list_id parameter"}), 400
+    # Support both list_ids (comma-separated) and list_id (single)
+    list_ids_param = request.args.get('list_ids', '')
+    list_id_param = request.args.get('list_id', '')
+    
+    if list_ids_param:
+        list_ids = [lid.strip() for lid in list_ids_param.split(',') if lid.strip()]
+    elif list_id_param:
+        list_ids = [list_id_param]
+    else:
+        list_ids = []
+    
+    if not list_ids:
+        return jsonify({"error": "Missing list_id or list_ids parameter"}), 400
     
     try:
-        tasks = get_cached_tasks(list_id)
+        if len(list_ids) == 1:
+            tasks = get_cached_tasks(list_ids[0])
+        else:
+            tasks, _ = get_cached_tasks_multi(list_ids)
+        
         html = interactive_chart_service.generate_chart_html(tasks, full_html=False)
         
         return Response(html, mimetype='text/html')
