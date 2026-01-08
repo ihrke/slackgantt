@@ -390,9 +390,21 @@ def health_check():
 
 def main():
     """Run the Flask app."""
-    logger.info(f"Starting SlackGantt dashboard on port {config.PORT}...")
-    logger.info(f"Dashboard URL: {config.get_dashboard_url()}/")
-    flask_app.run(host="0.0.0.0", port=config.PORT, debug=config.DEBUG)
+    import ssl
+    
+    # Check if SSL certificates exist for HTTPS
+    cert_file = os.path.join(os.path.dirname(__file__), 'cert.pem')
+    key_file = os.path.join(os.path.dirname(__file__), 'key.pem')
+    
+    if os.path.exists(cert_file) and os.path.exists(key_file):
+        logger.info(f"Starting SlackGantt dashboard with HTTPS on port {config.PORT}...")
+        logger.info(f"Dashboard URL: https://localhost:{config.PORT}/")
+        ssl_context = (cert_file, key_file)
+        flask_app.run(host="0.0.0.0", port=config.PORT, debug=config.DEBUG, ssl_context=ssl_context)
+    else:
+        logger.info(f"Starting SlackGantt dashboard on port {config.PORT}...")
+        logger.info(f"Dashboard URL: http://localhost:{config.PORT}/")
+        flask_app.run(host="0.0.0.0", port=config.PORT, debug=config.DEBUG)
 
 
 if __name__ == "__main__":

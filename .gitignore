@@ -43,3 +43,7 @@ build/
 *.tmp
 temp/
 
+
+# SSL certificates (local development)
+cert.pem
+key.pem

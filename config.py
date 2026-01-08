@@ -77,7 +77,8 @@ class Config:
         """Get the dashboard URL, using BASE_URL if set, otherwise localhost."""
         if cls.BASE_URL:
             return cls.BASE_URL.rstrip('/')
-        return f"http://localhost:{cls.PORT}"
+        # Default to HTTPS for localhost (required for Slack OAuth)
+        return f"https://localhost:{cls.PORT}"
     
     @classmethod
     def get_oauth_redirect_uri(cls) -> str:
