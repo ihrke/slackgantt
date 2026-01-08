@@ -19,6 +19,8 @@ class Task:
         start_date: When the task begins
         end_date: When the task ends
         category: For color-coding (e.g., "Students", "Projects")
+        source_list_id: ID of the Slack List this task belongs to
+        source_list_name: Human-readable name of the source list
         
     Extensible fields (stored in metadata):
         - group: For visual grouping (e.g., "Phase 1", "Backend")
@@ -32,6 +34,8 @@ class Task:
     start_date: date
     end_date: date
     category: Optional[str] = None
+    source_list_id: Optional[str] = None
+    source_list_name: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
     
     @property
