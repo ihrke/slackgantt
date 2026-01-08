@@ -144,10 +144,14 @@ class ListService:
                 logger.warning(f"No items found in list {list_id}")
                 return []
             
+            # Get list name for task attribution
+            list_info = self.get_list_info(list_id)
+            list_name = list_info.get("title", f"List {list_id}")
+            
             # Convert to Task objects
             tasks = []
             for item in items:
-                task = self._parse_item_to_task(item, list_id)
+                task = self._parse_item_to_task(item, list_id, list_name)
                 if task:
                     tasks.append(task)
                 else:
@@ -165,6 +169,34 @@ class ListService:
         except Exception as e:
             logger.exception(f"Error fetching list {list_id}: {e}")
             return self._cache.get(list_id, [])
+    
+    def fetch_multiple_lists(self, list_ids: list[str], force_refresh: bool = False) -> tuple[list[Task], dict[str, str]]:
+        """
+        Fetch tasks from multiple Slack Lists and merge them.
+        
+        Args:
+            list_ids: List of Slack List IDs to fetch
+            force_refresh: If True, refresh all caches
+            
+        Returns:
+            Tuple of (merged tasks sorted by start date, dict of list_id -> list_name)
+        """
+        all_tasks = []
+        list_names = {}
+        
+        for list_id in list_ids:
+            tasks = self.fetch_list_items(list_id, force_refresh=force_refresh)
+            all_tasks.extend(tasks)
+            
+            # Get list name for this list
+            list_info = self.get_list_info(list_id)
+            list_names[list_id] = list_info.get("title", f"List {list_id}")
+        
+        # Sort all tasks by start date
+        all_tasks.sort(key=lambda t: (t.start_date, t.name))
+        
+        logger.info(f"Fetched {len(all_tasks)} total tasks from {len(list_ids)} lists")
+        return all_tasks, list_names
     
     def _fetch_items_from_api(self, list_id: str) -> list[dict]:
         """Fetch items from Slack Lists API."""
@@ -288,7 +320,7 @@ class ListService:
         mapping = self._column_mapping.get(list_id, {})
         return mapping.get(column_name)
     
-    def _parse_item_to_task(self, item: dict, list_id: str = None) -> Optional[Task]:
+    def _parse_item_to_task(self, item: dict, list_id: str = None, list_name: str = None) -> Optional[Task]:
         """Parse a Slack List item into a Task object."""
         fields = item.get("fields", [])
         
@@ -381,6 +413,8 @@ class ListService:
             start_date=start_date,
             end_date=end_date,
             category=category,
+            source_list_id=list_id,
+            source_list_name=list_name,
             metadata=metadata
         )
     

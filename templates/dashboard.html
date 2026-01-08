@@ -198,9 +198,11 @@
             <div class="text-6xl mb-4">📋</div>
             <h2 class="text-xl font-semibold text-slate-800 mb-2">List ID Required</h2>
             <p class="text-slate-600 mb-6">{{ error }}</p>
-            <div class="bg-slate-50 rounded-lg p-4 text-left max-w-md mx-auto">
-                <p class="text-sm text-slate-600 mb-2">Example URL:</p>
-                <code class="text-sm text-blue-600 break-all">{{ request.host_url }}?list_id=YOUR_LIST_ID</code>
+            <div class="bg-slate-50 rounded-lg p-4 text-left max-w-lg mx-auto">
+                <p class="text-sm text-slate-600 mb-2">Single list:</p>
+                <code class="text-sm text-blue-600 break-all block mb-3">{{ request.host_url }}?list_id=YOUR_LIST_ID</code>
+                <p class="text-sm text-slate-600 mb-2">Multiple lists:</p>
+                <code class="text-sm text-blue-600 break-all block">{{ request.host_url }}?list_ids=LIST_ID_1,LIST_ID_2,LIST_ID_3</code>
             </div>
         </div>
     </main>
@@ -214,6 +216,30 @@
                     <input type="checkbox" id="show-past-toggle" class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" onchange="togglePastEvents()" {% if show_past %}checked{% endif %}>
                     <span class="text-sm font-medium text-slate-600">Show completed events</span>
                 </label>
+                
+                {% if list_ids|length > 1 %}
+                <span class="text-slate-300">|</span>
+                <span class="text-sm font-medium text-slate-600">Lists:</span>
+                <button 
+                    onclick="toggleAllLists()" 
+                    class="filter-btn px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    id="all-lists-btn"
+                >
+                    All
+                </button>
+                {% for lid in list_ids %}
+                <button 
+                    onclick="toggleList('{{ lid }}')" 
+                    class="filter-btn category-badge {% if lid in active_lists %}active{% else %}inactive{% endif %}"
+                    style="background-color: {{ list_colors[lid] }}22; color: {{ list_colors[lid] }}; border: 2px solid {{ list_colors[lid] }};"
+                    data-list="{{ lid }}"
+                    id="filter-list-{{ lid }}"
+                >
+                    <span class="category-dot" style="background-color: {{ list_colors[lid] }};"></span>
+                    {{ list_names[lid] }}
+                </button>
+                {% endfor %}
+                {% endif %}
                 
                 {% if categories|length > 1 %}
                 <span class="text-slate-300">|</span>
@@ -267,6 +293,9 @@
                         <tr class="border-b border-slate-200">
                             <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600">Task Name</th>
                             <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600">Category</th>
+                            {% if list_ids|length > 1 %}
+                            <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600">List</th>
+                            {% endif %}
                             <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600">Start Date</th>
                             <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600">End Date</th>
                             <th class="text-left py-3 px-4 text-sm font-semibold text-slate-600">Duration</th>
@@ -277,11 +306,14 @@
                         {% for task in tasks %}
                         {% set today = today_date %}
                         {% set is_past = task.end_date < today %}
+                        {% set task_list_id = task.source_list_id or list_ids[0] %}
+                        {% set task_list_name = task.source_list_name or list_names.get(task_list_id, 'Unknown') %}
                         <tr class="table-row border-b border-slate-100 {% if is_past %}past-event{% endif %} cursor-pointer" 
                             id="task-row-{{ task.id }}"
                             data-task-id="{{ task.id }}"
                             data-task-name="{{ task.name }}"
                             data-category="{{ task.category or 'Uncategorized' }}"
+                            data-list-id="{{ task_list_id }}"
                             data-is-past="{{ 'true' if is_past else 'false' }}"
                             onclick="scrollToChartBar('{{ task.id }}', '{{ task.name }}')"
                             {% if is_past %}style="display: none;"{% endif %}>
@@ -296,6 +328,15 @@
                                     {{ cat }}
                                 </span>
                             </td>
+                            {% if list_ids|length > 1 %}
+                            <td class="py-3 px-4">
+                                {% set list_color = list_colors.get(task_list_id, '#6b7280') %}
+                                <span class="category-badge" style="background-color: {{ list_color }}22; color: {{ list_color }};">
+                                    <span class="category-dot" style="background-color: {{ list_color }};"></span>
+                                    {{ task_list_name }}
+                                </span>
+                            </td>
+                            {% endif %}
                             <td class="py-3 px-4 text-slate-600">
                                 {{ task.start_date.strftime('%b %d, %Y') }}
                             </td>
@@ -315,7 +356,7 @@
                         </tr>
                         {% else %}
                         <tr>
-                            <td colspan="6" class="py-8 text-center text-slate-500">
+                            <td colspan="{{ 7 if list_ids|length > 1 else 6 }}" class="py-8 text-center text-slate-500">
                                 No tasks found. Add tasks to your Slack List and click "Refresh" to sync.
                             </td>
                         </tr>
@@ -341,10 +382,13 @@
         const allTasks = {{ tasks_json|safe }};
         const categoryColors = {{ category_colors_json|safe }};
         const todayStr = '{{ today_date.isoformat() }}';
-        const listId = '{{ list_id }}';
+        const listIds = {{ list_ids|tojson|safe }};
+        const listNames = {{ list_names_json|safe }};
+        const listColors = {{ list_colors_json|safe }};
         
-        // Track active categories and past events visibility (from server state)
+        // Track active filters (from server state)
         let activeCategories = new Set({{ active_categories_json|safe }});
+        let activeLists = new Set({{ active_lists_json|safe }});
         let showPastEvents = {{ 'true' if show_past else 'false' }};
         
         Plotly.newPlot('gantt-chart', chartData.data, chartData.layout, {
@@ -381,12 +425,20 @@
         // Build URL with current filter state
         function buildFilterUrl() {
             const params = new URLSearchParams();
-            params.set('list_id', listId);
+            // Use list_ids for multiple lists, list_id for single
+            if (listIds.length > 1) {
+                params.set('list_ids', listIds.join(','));
+            } else {
+                params.set('list_id', listIds[0]);
+            }
             if (showPastEvents) {
                 params.set('show_past', 'true');
             }
             if (activeCategories.size < Object.keys(categoryColors).length) {
                 params.set('categories', Array.from(activeCategories).join(','));
+            }
+            if (listIds.length > 1 && activeLists.size < listIds.length) {
+                params.set('lists', Array.from(activeLists).join(','));
             }
             return '/?' + params.toString();
         }
@@ -451,18 +503,68 @@
             applyFilters();  // Reload with new chart
         }
         
-        // Update table visibility based on active categories and past events filter
+        // Toggle list visibility
+        function toggleList(listId) {
+            const btn = document.getElementById('filter-list-' + listId);
+            
+            if (activeLists.has(listId)) {
+                activeLists.delete(listId);
+                btn.classList.remove('active');
+                btn.classList.add('inactive');
+            } else {
+                activeLists.add(listId);
+                btn.classList.remove('inactive');
+                btn.classList.add('active');
+            }
+            
+            updateTableVisibility();  // Update table immediately
+            applyFilters();  // Reload with new chart
+        }
+        
+        // Toggle all lists
+        function toggleAllLists() {
+            const allActive = activeLists.size === listIds.length;
+            
+            if (allActive) {
+                // Deactivate all
+                activeLists.clear();
+            } else {
+                // Activate all
+                activeLists = new Set(listIds);
+            }
+            
+            // Update button states
+            listIds.forEach(lid => {
+                const btn = document.getElementById('filter-list-' + lid);
+                if (btn) {
+                    if (activeLists.has(lid)) {
+                        btn.classList.remove('inactive');
+                        btn.classList.add('active');
+                    } else {
+                        btn.classList.remove('active');
+                        btn.classList.add('inactive');
+                    }
+                }
+            });
+            
+            updateTableVisibility();  // Update table immediately
+            applyFilters();  // Reload with new chart
+        }
+        
+        // Update table visibility based on active categories, lists, and past events filter
         function updateTableVisibility() {
             const rows = document.querySelectorAll('#task-table-body tr[data-category]');
             let visibleCount = 0;
             
             rows.forEach(row => {
                 const category = row.dataset.category;
+                const listId = row.dataset.listId;
                 const isPast = row.dataset.isPast === 'true';
                 const categoryMatch = activeCategories.has(category);
+                const listMatch = listIds.length === 1 || activeLists.has(listId);
                 const pastMatch = showPastEvents || !isPast;
                 
-                if (categoryMatch && pastMatch) {
+                if (categoryMatch && listMatch && pastMatch) {
                     row.style.display = '';
                     visibleCount++;
                 } else {
@@ -476,7 +578,7 @@
         // Initialize table visibility on page load
         updateTableVisibility();
 
-        // Refresh data from Slack List
+        // Refresh data from Slack List(s)
         async function refreshData() {
             const btn = document.getElementById('refresh-btn');
             const icon = document.getElementById('refresh-icon');
@@ -486,7 +588,11 @@
             icon.classList.add('spin');
             
             try {
-                const response = await fetch('/api/tasks?list_id=' + encodeURIComponent(listId) + '&refresh=true');
+                // Use list_ids for multiple lists, list_id for single
+                const listParam = listIds.length > 1 
+                    ? 'list_ids=' + encodeURIComponent(listIds.join(','))
+                    : 'list_id=' + encodeURIComponent(listIds[0]);
+                const response = await fetch('/api/tasks?' + listParam + '&refresh=true');
                 const data = await response.json();
                 
                 if (data.success) {
