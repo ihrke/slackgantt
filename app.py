@@ -54,9 +54,8 @@ oauth.register(
     client_secret=config.SLACK_CLIENT_SECRET,
     authorize_url='https://slack.com/oauth/v2/authorize',
     access_token_url='https://slack.com/api/oauth.v2.access',
-    client_kwargs={
-        'scope': '',  # No bot scopes needed
-        'user_scope': 'identity.basic,identity.team',  # User identity scopes
+    authorize_params={
+        'user_scope': 'identity.basic,identity.team',  # User identity scopes for "Sign in with Slack"
     },
 )
 
