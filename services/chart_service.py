@@ -74,7 +74,7 @@ class ChartService:
         self.width = width or config.CHART_WIDTH
         self.height = height or config.CHART_HEIGHT
         self.dpi = dpi or config.CHART_DPI
-        self.title = title or config.CHART_TITLE
+        self.title = title or "Project Timeline"
         self.color_map = color_map or config.get_category_colors()
         self.default_color = config.DEFAULT_TASK_COLOR
         
@@ -406,7 +406,7 @@ class InteractiveChartService:
             title: Chart title
             color_map: Mapping of category names to colors
         """
-        self.title = title or config.CHART_TITLE
+        self.title = title or "Project Timeline"
         self.color_map = color_map or config.get_category_colors()
         self.default_color = config.DEFAULT_TASK_COLOR
         self._color_index = 0
