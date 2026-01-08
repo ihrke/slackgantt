@@ -23,7 +23,7 @@ class Config:
     SLACK_USER_TOKEN: str = os.environ.get("SLACK_USER_TOKEN", "")
     
     # Flask session secret key
-    SECRET_KEY: str = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+    SECRET_KEY: str = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
     
     # Field mapping for Slack Lists - use human-readable column names
     # These are matched against CSV export headers (case-insensitive)
