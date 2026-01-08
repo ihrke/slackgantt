@@ -97,6 +97,28 @@
             from { transform: rotate(0deg); }
             to { transform: rotate(360deg); }
         }
+        
+        .user-menu {
+            position: relative;
+        }
+        
+        .user-dropdown {
+            position: absolute;
+            right: 0;
+            top: 100%;
+            margin-top: 8px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s ease;
+        }
+        
+        .user-menu:hover .user-dropdown {
+            opacity: 1;
+            visibility: visible;
+        }
     </style>
 </head>
 <body class="bg-slate-50 min-h-screen">
@@ -108,18 +130,21 @@
                 {% if description %}
                 <p class="text-blue-100 text-sm mt-1 max-w-xl">{{ description }}</p>
                 {% endif %}
+                {% if error %}
+                <p class="text-red-300 text-sm mt-1">{{ error }}</p>
+                {% elif tasks %}
                 <p class="text-blue-200 text-sm mt-1">
                     <span id="task-count">{{ tasks|length }}</span> tasks • 
                     <span id="date-range">
-                        {% if tasks %}
-                            {{ tasks|map(attribute='start_date')|min }} to {{ tasks|map(attribute='end_date')|max }}
-                        {% else %}
-                            No tasks
-                        {% endif %}
+                        {{ tasks|map(attribute='start_date')|min }} to {{ tasks|map(attribute='end_date')|max }}
                     </span>
                 </p>
+                {% else %}
+                <p class="text-blue-200 text-sm mt-1">No tasks</p>
+                {% endif %}
             </div>
             <div class="flex items-center gap-4">
+                {% if not error %}
                 <span id="last-updated" class="text-blue-200 text-sm">
                     Last updated: <span id="update-time">just now</span>
                 </span>
@@ -131,12 +156,55 @@
                     <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
-                    Refresh from List
+                    Refresh
                 </button>
+                {% endif %}
+                
+                <!-- User Menu -->
+                {% if user %}
+                <div class="user-menu">
+                    <button class="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg transition-colors">
+                        {% if user.image %}
+                        <img src="{{ user.image }}" alt="{{ user.name }}" class="w-6 h-6 rounded-full">
+                        {% else %}
+                        <div class="w-6 h-6 rounded-full bg-blue-400 flex items-center justify-center text-xs font-medium">
+                            {{ user.name[0]|upper if user.name else '?' }}
+                        </div>
+                        {% endif %}
+                        <span class="text-sm">{{ user.name }}</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
+                    <div class="user-dropdown min-w-[160px]">
+                        <div class="px-4 py-3 border-b border-slate-100">
+                            <p class="text-sm font-medium text-slate-800">{{ user.name }}</p>
+                            <p class="text-xs text-slate-500">{{ user.team_name }}</p>
+                        </div>
+                        <a href="/logout" class="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                            Sign out
+                        </a>
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
     </header>
 
+    {% if error %}
+    <!-- Error State -->
+    <main class="max-w-7xl mx-auto px-8 py-8">
+        <div class="card p-8 text-center">
+            <div class="text-6xl mb-4">📋</div>
+            <h2 class="text-xl font-semibold text-slate-800 mb-2">List ID Required</h2>
+            <p class="text-slate-600 mb-6">{{ error }}</p>
+            <div class="bg-slate-50 rounded-lg p-4 text-left max-w-md mx-auto">
+                <p class="text-sm text-slate-600 mb-2">Example URL:</p>
+                <code class="text-sm text-blue-600 break-all">{{ request.host_url }}?list_id=YOUR_LIST_ID</code>
+            </div>
+        </div>
+    </main>
+    {% else %}
     <main class="max-w-7xl mx-auto px-8 py-8">
         <!-- Filters -->
         <div class="card p-4 mb-6">
@@ -178,7 +246,7 @@
             <div class="flex justify-between items-center mb-4">
                 <h2 class="text-lg font-semibold text-slate-700">Timeline View</h2>
                 <div class="text-sm text-slate-500">
-                    Hover over bars for details • Drag to pan • Scroll to zoom • Use range slider below chart
+                    Hover over bars for details • Drag to pan • Scroll to zoom
                 </div>
             </div>
             <div id="gantt-chart" class="w-full" style="min-height: 500px;"></div>
@@ -248,7 +316,7 @@
                         {% else %}
                         <tr>
                             <td colspan="6" class="py-8 text-center text-slate-500">
-                                No tasks found. Add tasks to your Slack List and click "Refresh from List".
+                                No tasks found. Add tasks to your Slack List and click "Refresh" to sync.
                             </td>
                         </tr>
                         {% endfor %}
@@ -261,17 +329,11 @@
         <div class="mt-8 p-6 bg-blue-50 rounded-xl border border-blue-100">
             <h3 class="font-semibold text-blue-900 mb-2">How to Update Tasks</h3>
             <p class="text-blue-800 text-sm">
-                Edit your tasks in the <strong>Slack List</strong>, then click "Refresh from List" to sync changes here.
+                Edit your tasks in the <strong>Slack List</strong>, then click "Refresh" to sync changes here.
                 The chart will automatically update with your latest data.
             </p>
         </div>
     </main>
-
-    <!-- Footer -->
-    <footer class="text-center py-6 text-slate-400 text-sm">
-        Powered by SlackGantt • 
-        <a href="https://slack.com" class="text-blue-500 hover:underline">Open Slack</a>
-    </footer>
 
     <script>
         // Initialize chart with server-rendered data
@@ -279,6 +341,7 @@
         const allTasks = {{ tasks_json|safe }};
         const categoryColors = {{ category_colors_json|safe }};
         const todayStr = '{{ today_date.isoformat() }}';
+        const listId = '{{ list_id }}';
         
         // Track active categories and past events visibility (from server state)
         let activeCategories = new Set({{ active_categories_json|safe }});
@@ -318,14 +381,14 @@
         // Build URL with current filter state
         function buildFilterUrl() {
             const params = new URLSearchParams();
+            params.set('list_id', listId);
             if (showPastEvents) {
                 params.set('show_past', 'true');
             }
             if (activeCategories.size < Object.keys(categoryColors).length) {
                 params.set('categories', Array.from(activeCategories).join(','));
             }
-            const queryString = params.toString();
-            return queryString ? '?' + queryString : '/';
+            return '/?' + params.toString();
         }
         
         // Reload page with new filters
@@ -423,7 +486,7 @@
             icon.classList.add('spin');
             
             try {
-                const response = await fetch('/api/tasks?refresh=true');
+                const response = await fetch('/api/tasks?list_id=' + encodeURIComponent(listId) + '&refresh=true');
                 const data = await response.json();
                 
                 if (data.success) {
@@ -475,5 +538,12 @@
             }
         }
     </script>
+    {% endif %}
+
+    <!-- Footer -->
+    <footer class="text-center py-6 text-slate-400 text-sm">
+        Powered by SlackGantt • 
+        <a href="https://slack.com" class="text-blue-500 hover:underline">Open Slack</a>
+    </footer>
 </body>
 </html>

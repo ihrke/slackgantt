@@ -4,6 +4,7 @@ Loads settings from environment variables with sensible defaults.
 """
 
 import os
+import secrets
 from dotenv import load_dotenv
 
 # Load environment variables from .env file if present
@@ -13,11 +14,16 @@ load_dotenv()
 class Config:
     """Application configuration loaded from environment variables."""
     
-    # Slack credentials
-    SLACK_BOT_TOKEN: str = os.environ.get("SLACK_BOT_TOKEN", "")
-    SLACK_USER_TOKEN: str = os.environ.get("SLACK_USER_TOKEN", "")  # For Lists API
-    SLACK_SIGNING_SECRET: str = os.environ.get("SLACK_SIGNING_SECRET", "")
-    SLACK_APP_TOKEN: str = os.environ.get("SLACK_APP_TOKEN", "")  # For Socket Mode
+    # Slack OAuth credentials (for "Sign in with Slack")
+    SLACK_CLIENT_ID: str = os.environ.get("SLACK_CLIENT_ID", "")
+    SLACK_CLIENT_SECRET: str = os.environ.get("SLACK_CLIENT_SECRET", "")
+    SLACK_TEAM_ID: str = os.environ.get("SLACK_TEAM_ID", "")  # Workspace ID to restrict access
+    
+    # Slack User Token for Lists API access
+    SLACK_USER_TOKEN: str = os.environ.get("SLACK_USER_TOKEN", "")
+    
+    # Flask session secret key
+    SECRET_KEY: str = os.environ.get("SECRET_KEY", secrets.token_hex(32))
     
     # Field mapping for Slack Lists - use human-readable column names
     # These are matched against CSV export headers (case-insensitive)
@@ -52,16 +58,10 @@ class Config:
                 options[opt_id.strip()] = label.strip()
         return options
     
-    # Target configuration
-    SLACK_LIST_ID: str = os.environ.get("SLACK_LIST_ID", "")
-    SLACK_CANVAS_ID: str = os.environ.get("SLACK_CANVAS_ID", "")
-    SLACK_CHANNEL_ID: str = os.environ.get("SLACK_CHANNEL_ID", "")
-    
     # Chart configuration
     CHART_WIDTH: int = int(os.environ.get("CHART_WIDTH", "14"))
     CHART_HEIGHT: int = int(os.environ.get("CHART_HEIGHT", "8"))
     CHART_DPI: int = int(os.environ.get("CHART_DPI", "150"))
-    CHART_TITLE: str = os.environ.get("CHART_TITLE", "Project Timeline")
     
     # Color scheme for task categories (extensible)
     # Format: category_name -> hex color
@@ -70,7 +70,7 @@ class Config:
     # Server configuration
     PORT: int = int(os.environ.get("PORT", "3000"))
     DEBUG: bool = os.environ.get("DEBUG", "false").lower() == "true"
-    BASE_URL: str = os.environ.get("BASE_URL", "")  # e.g., https://slackgantt.fly.dev
+    BASE_URL: str = os.environ.get("BASE_URL", "")  # e.g., https://slackgantt.example.com
     
     @classmethod
     def get_dashboard_url(cls) -> str:
@@ -79,15 +79,19 @@ class Config:
             return cls.BASE_URL.rstrip('/')
         return f"http://localhost:{cls.PORT}"
     
-    # Polling configuration (minutes between automatic updates, 0 = disabled)
-    POLL_INTERVAL_MINUTES: int = int(os.environ.get("POLL_INTERVAL_MINUTES", "0"))
+    @classmethod
+    def get_oauth_redirect_uri(cls) -> str:
+        """Get the OAuth callback URL."""
+        return f"{cls.get_dashboard_url()}/oauth/callback"
     
     @classmethod
     def validate(cls) -> list[str]:
         """Validate required configuration. Returns list of missing fields."""
         required = [
-            ("SLACK_BOT_TOKEN", cls.SLACK_BOT_TOKEN),
-            ("SLACK_SIGNING_SECRET", cls.SLACK_SIGNING_SECRET),
+            ("SLACK_CLIENT_ID", cls.SLACK_CLIENT_ID),
+            ("SLACK_CLIENT_SECRET", cls.SLACK_CLIENT_SECRET),
+            ("SLACK_USER_TOKEN", cls.SLACK_USER_TOKEN),
+            ("SLACK_TEAM_ID", cls.SLACK_TEAM_ID),
         ]
         return [name for name, value in required if not value]
     
@@ -111,4 +115,3 @@ class Config:
 
 # Singleton instance
 config = Config()
-

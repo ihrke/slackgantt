@@ -451,21 +451,43 @@ class ListService:
     def get_list_info(self, list_id: str) -> dict:
         """
         Get the title and description of a Slack List.
-        Uses CSV column headers to infer list structure.
-        Falls back to configured values.
+        Fetches from slackLists.get API.
+        Falls back to list_id if API fails.
         """
         if list_id in self._list_info_cache:
             return self._list_info_cache[list_id]
         
         info = {
-            "title": config.CHART_TITLE,
+            "title": f"List {list_id}",  # Default fallback
             "description": ""
         }
         
-        # Try to get CSV data which has human-readable column names
-        csv_data = self._fetch_csv_data(list_id)
-        if csv_data["columns"]:
-            logger.debug(f"CSV columns: {csv_data['columns']}")
+        if not self.user_token:
+            self._list_info_cache[list_id] = info
+            return info
+        
+        try:
+            # Fetch list metadata from Slack API
+            url = "https://slack.com/api/slackLists.get"
+            headers = {
+                "Authorization": f"Bearer {self.user_token}",
+                "Content-Type": "application/json"
+            }
+            payload = {"list_id": list_id}
+            
+            response = requests.post(url, headers=headers, json=payload)
+            data = response.json()
+            
+            if data.get("ok"):
+                list_data = data.get("list", {})
+                info["title"] = list_data.get("name", info["title"])
+                info["description"] = list_data.get("description", "")
+                logger.info(f"Fetched list info: {info['title']}")
+            else:
+                logger.warning(f"Could not fetch list info: {data.get('error')}")
+                
+        except Exception as e:
+            logger.warning(f"Error fetching list info: {e}")
         
         self._list_info_cache[list_id] = info
         return info
