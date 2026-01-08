@@ -612,14 +612,7 @@ class InteractiveChartService:
         chart_height = max(400, total_height * 45 + 150)
         
         # Configure layout
-        chart_title = title or self.title
         fig.update_layout(
-            title=dict(
-                text=chart_title,
-                font=dict(size=20, color='#2c3e50'),
-                x=0.5,
-                xanchor='center'
-            ),
             xaxis=dict(
                 type='date',
                 title='Timeline',
@@ -644,7 +637,7 @@ class InteractiveChartService:
             barmode='overlay',
             plot_bgcolor='#fafafa',
             paper_bgcolor='white',
-            margin=dict(l=20, r=20, t=60, b=80),
+            margin=dict(l=20, r=20, t=20, b=80),
             hoverlabel=dict(
                 bgcolor='white',
                 font_size=13,
