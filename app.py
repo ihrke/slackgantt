@@ -67,6 +67,8 @@ interactive_chart_service = InteractiveChartService()
 # Cache for tasks (to avoid hitting Slack API on every page load)
 _task_cache: dict[str, list[Task]] = {}  # list_id -> tasks
 _cache_timestamp: dict[str, float] = {}  # list_id -> timestamp
+_multi_list_cache: dict[str, tuple[list[Task], dict[str, str]]] = {}  # cache_key -> (tasks, list_names)
+_multi_list_cache_timestamp: dict[str, float] = {}  # cache_key -> timestamp
 CACHE_TTL_SECONDS = 60  # Cache for 1 minute
 
 
@@ -186,6 +188,29 @@ def get_cached_tasks(list_id: str, force_refresh: bool = False) -> list[Task]:
     return _task_cache.get(list_id, [])
 
 
+def get_cached_tasks_multi(list_ids: list[str], force_refresh: bool = False) -> tuple[list[Task], dict[str, str]]:
+    """
+    Get tasks from multiple lists with caching.
+    
+    Args:
+        list_ids: List of Slack List IDs
+        force_refresh: If True, bypass cache
+        
+    Returns:
+        Tuple of (merged tasks, dict of list_id -> list_name)
+    """
+    now = time.time()
+    cache_key = ",".join(sorted(list_ids))
+    cache_expired = (now - _multi_list_cache_timestamp.get(cache_key, 0)) > CACHE_TTL_SECONDS
+    
+    if force_refresh or cache_expired or cache_key not in _multi_list_cache:
+        tasks, list_names = list_service.fetch_multiple_lists(list_ids, force_refresh=force_refresh)
+        _multi_list_cache[cache_key] = (tasks, list_names)
+        _multi_list_cache_timestamp[cache_key] = now
+    
+    return _multi_list_cache.get(cache_key, ([], {}))
+
+
 # ============================================================================
 # Web Dashboard Routes
 # ============================================================================
@@ -196,27 +221,46 @@ def dashboard():
     """Render the interactive Gantt chart dashboard."""
     import json
     
-    # Get list_id from query parameter
-    list_id = request.args.get('list_id')
-    if not list_id:
+    # Get list_ids from query parameter (comma-separated) or single list_id
+    list_ids_param = request.args.get('list_ids', '')
+    list_id_param = request.args.get('list_id', '')
+    
+    # Parse list IDs - support both list_ids (comma-separated) and list_id (single)
+    if list_ids_param:
+        list_ids = [lid.strip() for lid in list_ids_param.split(',') if lid.strip()]
+    elif list_id_param:
+        list_ids = [list_id_param]
+    else:
+        list_ids = []
+    
+    if not list_ids:
         return render_template(
             'dashboard.html',
-            error="Missing list_id parameter. Please provide a list ID: /?list_id=YOUR_LIST_ID",
+            error="Missing list_id parameter. Please provide list ID(s): /?list_id=YOUR_LIST_ID or /?list_ids=ID1,ID2,ID3",
             title="Error",
             user=get_current_user()
         ), 400
     
-    all_tasks = get_cached_tasks(list_id)
+    # Fetch tasks from all lists
+    if len(list_ids) == 1:
+        # Single list - use original method for backward compatibility
+        all_tasks = get_cached_tasks(list_ids[0])
+        list_info = list_service.get_list_info(list_ids[0])
+        list_names = {list_ids[0]: list_info["title"]}
+        chart_title = list_info["title"]
+        list_description = list_info["description"]
+    else:
+        # Multiple lists - use multi-list method
+        all_tasks, list_names = get_cached_tasks_multi(list_ids)
+        chart_title = " + ".join(list_names.values())
+        list_description = f"Combined view of {len(list_ids)} lists"
+    
     today = date.today()
     
     # Get filter parameters from query string
     show_past = request.args.get('show_past', 'false').lower() == 'true'
     active_categories = request.args.get('categories', '')  # Comma-separated
-    
-    # Get list info (title, description)
-    list_info = list_service.get_list_info(list_id)
-    chart_title = list_info["title"]
-    list_description = list_info["description"]
+    active_lists = request.args.get('lists', '')  # Comma-separated list IDs
     
     # Get unique categories and assign colors (from ALL tasks, not filtered)
     all_categories = set()
@@ -247,20 +291,42 @@ def dashboard():
             category_colors[cat] = color_palette[color_index % len(color_palette)]
             color_index += 1
     
+    # Build list color map for UI
+    list_colors = {}
+    list_color_palette = [
+        "#6366f1",  # Indigo
+        "#8b5cf6",  # Violet
+        "#ec4899",  # Pink
+        "#14b8a6",  # Teal
+        "#f97316",  # Orange
+        "#84cc16",  # Lime
+        "#06b6d4",  # Cyan
+        "#f43f5e",  # Rose
+    ]
+    for i, list_id in enumerate(list_ids):
+        list_colors[list_id] = list_color_palette[i % len(list_color_palette)]
+    
     # Determine which categories are active
     if active_categories:
         active_cat_set = set(active_categories.split(','))
     else:
         active_cat_set = all_categories  # All active by default
     
+    # Determine which lists are active
+    if active_lists:
+        active_list_set = set(active_lists.split(','))
+    else:
+        active_list_set = set(list_ids)  # All active by default
+    
     # Filter tasks for the chart
     chart_tasks = []
     for task in all_tasks:
         task_cat = task.category or "Uncategorized"
+        task_list = task.source_list_id or list_ids[0]
         is_past = task.end_date < today
         
-        # Include if category is active AND (show_past OR not past)
-        if task_cat in active_cat_set and (show_past or not is_past):
+        # Include if category is active AND list is active AND (show_past OR not past)
+        if task_cat in active_cat_set and task_list in active_list_set and (show_past or not is_past):
             chart_tasks.append(task)
     
     # Update interactive chart service with colors
@@ -277,6 +343,8 @@ def dashboard():
             "start_date": task.start_date.isoformat(),
             "end_date": task.end_date.isoformat(),
             "category": task.category or "Uncategorized",
+            "source_list_id": task.source_list_id or list_ids[0],
+            "source_list_name": task.source_list_name or list_names.get(task.source_list_id or list_ids[0], "Unknown"),
             "duration_days": task.duration_days,
             "notes": task.metadata.get("notes", ""),
             "is_past": task.end_date < today
@@ -299,7 +367,13 @@ def dashboard():
         active_categories_json=json.dumps(list(active_cat_set)),
         show_past=show_past,
         today_date=today,
-        list_id=list_id,
+        list_ids=list_ids,
+        list_names=list_names,
+        list_names_json=json.dumps(list_names),
+        list_colors=list_colors,
+        list_colors_json=json.dumps(list_colors),
+        active_lists=list(active_list_set),
+        active_lists_json=json.dumps(list(active_list_set)),
         user=get_current_user()
     )
 
