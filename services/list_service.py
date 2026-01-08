@@ -382,7 +382,7 @@ class ListService:
         if list_id in self._csv_cache:
             return self._csv_cache[list_id]
         
-        result = {"columns": [], "rows": [], "category_values": set()}
+        result = {"columns": [], "rows": [], "category_values": set(), "title": None}
         
         try:
             headers = {
@@ -415,6 +415,10 @@ class ListService:
             if not data.get("ok") or data.get("status") != "COMPLETED":
                 logger.debug(f"Download job not completed")
                 return result
+            
+            # Try to get list title from response
+            if data.get("list_name"):
+                result["title"] = data.get("list_name")
             
             # Download the CSV
             download_url = data.get("download_url")
@@ -451,8 +455,8 @@ class ListService:
     def get_list_info(self, list_id: str) -> dict:
         """
         Get the title and description of a Slack List.
-        Fetches from slackLists.get API.
-        Falls back to list_id if API fails.
+        Tries to extract from CSV data (which includes the list name in download).
+        Falls back to list_id if unavailable.
         """
         if list_id in self._list_info_cache:
             return self._list_info_cache[list_id]
@@ -462,32 +466,10 @@ class ListService:
             "description": ""
         }
         
-        if not self.user_token:
-            self._list_info_cache[list_id] = info
-            return info
-        
-        try:
-            # Fetch list metadata from Slack API
-            url = "https://slack.com/api/slackLists.get"
-            headers = {
-                "Authorization": f"Bearer {self.user_token}",
-                "Content-Type": "application/json"
-            }
-            payload = {"list_id": list_id}
-            
-            response = requests.post(url, headers=headers, json=payload)
-            data = response.json()
-            
-            if data.get("ok"):
-                list_data = data.get("list", {})
-                info["title"] = list_data.get("name", info["title"])
-                info["description"] = list_data.get("description", "")
-                logger.info(f"Fetched list info: {info['title']}")
-            else:
-                logger.warning(f"Could not fetch list info: {data.get('error')}")
-                
-        except Exception as e:
-            logger.warning(f"Error fetching list info: {e}")
+        # Try to get title from CSV download metadata
+        csv_data = self._fetch_csv_data(list_id)
+        if csv_data.get("title"):
+            info["title"] = csv_data["title"]
         
         self._list_info_cache[list_id] = info
         return info
